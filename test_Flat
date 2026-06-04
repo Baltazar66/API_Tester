@@ -1,0 +1,13 @@
+import flet as ft
+
+def main(page: ft.Page):
+    def on_result(e: ft.FilePickerResultEvent):
+        print("Файл выбран:", e.files[0].path if e.files else "отмена")
+        page.add(ft.Text("Выбран: " + (e.files[0].path if e.files else "ничего")))
+        page.update()
+
+    fp = ft.FilePicker(on_result=on_result)
+    # не добавляем в overlay
+    page.add(ft.ElevatedButton("Выбрать файл", on_click=lambda _: fp.pick_files()))
+
+ft.app(target=main)

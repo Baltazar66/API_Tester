@@ -1,0 +1,15 @@
+# Виртуальное окружение
+venv/
+.venv/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Настройки VS Code (по желанию можно оставить папку .vscode)
+.vscode/
+
+# Файлы операционной системы
+Thumbs.db
+.DS_Store
