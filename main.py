@@ -7,8 +7,9 @@ import subprocess
 import platform
 import threading
 from tkinter import Tk, filedialog
+from datetime import datetime, timedelta
 
-running_tests = False   # <-- глобальный флаг
+running_tests = False   # глобальный флаг
 
 # Утилита для преобразования JSON в плоские поля (owner[name] и т.д.)
 def flatten_json(obj, parent_key=''):
@@ -66,7 +67,7 @@ def main(page: ft.Page):
         page.update()
 
     # ──────────────────────────────────────────────
-    # РУЧНОЙ РЕЖИМ (без изменений)
+    # РУЧНОЙ РЕЖИМ (с автодатами)
     # ──────────────────────────────────────────────
     base_url_field = ft.TextField(label="Базовый URL", width=420,
                                   value="https://test-api-eosago.renins.com")
@@ -120,6 +121,19 @@ def main(page: ft.Page):
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 json_obj = json.loads(content)
+
+                # ── Автозаполнение дат ──
+                tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                if "dateStart" in json_obj:
+                    json_obj["dateStart"] = tomorrow
+                if "usagePeriod" in json_obj and isinstance(json_obj["usagePeriod"], list) and len(json_obj["usagePeriod"]) == 1:
+                    period = json_obj["usagePeriod"][0]
+                    period["dateStart"] = tomorrow
+                    dt_tomorrow = datetime.strptime(tomorrow, "%Y-%m-%d")
+                    dt_end = dt_tomorrow.replace(year=dt_tomorrow.year + 1) - timedelta(days=1)
+                    period["dateEnd"] = dt_end.strftime("%Y-%m-%d")
+                # ─────────────────────────
+
                 form_data = flatten_json(json_obj)
                 form_data["key"] = api_key_value.value
             except Exception as ex:
@@ -166,25 +180,21 @@ def main(page: ft.Page):
     ]
 
     # ──────────────────────────────────────────────
-    # АВТОТЕСТЫ (открытие файлов по двойному клику)
+    # АВТОТЕСТЫ (надёжное обновление через контент ячеек)
     # ──────────────────────────────────────────────
-    import webbrowser
-    import subprocess
-    import platform
-
     tests_data = []
 
     # Ширины колонок
-    col_widths = [30, 130, 90, 150, 95, 150, 95, 250, 280, 130]
+    col_widths = [30, 130, 90, 150, 110, 150, 110, 250, 280, 130]
 
-    def open_file(filepath):
-        """Открыть файл в программе по умолчанию"""
+    def open_file_local(filepath):
+        """Открыть файл локально (версия внутри main)"""
         try:
             if platform.system() == 'Windows':
                 os.startfile(filepath)
-            elif platform.system() == 'Darwin':  # macOS
+            elif platform.system() == 'Darwin':
                 subprocess.call(('open', filepath))
-            else:  # Linux
+            else:
                 subprocess.call(('xdg-open', filepath))
         except Exception as ex:
             print(f"Не удалось открыть файл {filepath}: {ex}")
@@ -213,77 +223,31 @@ def main(page: ft.Page):
         column_spacing=0,
     )
 
-    # Обычная ячейка с тултипом
-    def make_cell_with_tooltip(text, width, tooltip_text=None):
-        tooltip = None
-        if tooltip_text:
-            tooltip = ft.Tooltip(
-                message=tooltip_text,
-                bgcolor="#757575",
-            )
+    # Вспомогательные функции создания неизменяемых частей ячеек
+    def make_cell_text(text, width, center=False):
+        """Возвращает ft.Text для использования внутри ячейки"""
+        return ft.Text(
+            text,
+            overflow=ft.TextOverflow.ELLIPSIS,
+            no_wrap=True,
+            text_align=ft.TextAlign.CENTER if center else None,
+        )
+
+    def make_cell_container(content, width, tooltip_text=None, center=False):
+        """Возвращает ft.Container с заданным содержимым"""
+        tooltip = ft.Tooltip(message=tooltip_text, bgcolor="#757575") if tooltip_text else None
         return ft.Container(
             width=width,
             tooltip=tooltip,
-            content=ft.Text(
-                text,
-                overflow=ft.TextOverflow.ELLIPSIS,
-                no_wrap=True,
-            ),
+            alignment=ft.alignment.Alignment(0, 0) if center else None,
+            content=content,
         )
 
-    # Ячейка для файла: двойной клик открывает файл, отображается только имя
-    def make_file_cell(display_name, full_path, width):
-        return ft.Container(
-            width=width,
-            tooltip=ft.Tooltip(message=full_path, bgcolor="#757575"),
-            content=ft.GestureDetector(
-                content=ft.Text(
-                    display_name,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                    no_wrap=True,
-                ),
-                on_double_tap=lambda e: open_file(full_path) if full_path else None,
-            ),
-        )
-
-    # Ячейка для длинного текста с переносом и (опционально) ссылкой
-    def make_multiline_cell(text, width, url=None):
-        if url:
-            return ft.Container(
-                width=width,
-                on_click=lambda e: webbrowser.open(url),
-                content=ft.Text(
-                    text,
-                    overflow=ft.TextOverflow.VISIBLE,
-                    no_wrap=False,
-                    color=ft.colors.BLUE,
-                    style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE),
-                ),
-            )
-        else:
-            return ft.Container(
-                width=width,
-                content=ft.Text(
-                    text,
-                    overflow=ft.TextOverflow.VISIBLE,
-                    no_wrap=False,
-                ),
-            )
-
-    # Кнопка "Запросить"
-    def make_request_button(row_index):
-        return ft.Container(
-            width=col_widths[9],
-            alignment=ft.alignment.Alignment(0, 0),
-            content=ft.ElevatedButton(
-                "Запросить",
-                on_click=lambda e, idx=row_index: print(f"Запрос для строки {idx}"),
-                width=120,
-                height=40,
-            ),
-        )
+    # Ячейки, которые будут обновляться: статус, calc_id, ras_id, payment_url, error_text
+    # Создаются один раз и сохраняются в tests_data
 
     def select_folder_and_fill(e):
+        global running_tests
         root = Tk()
         root.withdraw()
         root.attributes('-topmost', True)
@@ -322,6 +286,14 @@ def main(page: ft.Page):
         tests_data.clear()
         table.rows.clear()
         for i, (test_name, files_data) in enumerate(test_dict.items(), start=1):
+            # Объекты, которые будем обновлять
+            status_text = make_cell_text("Ожидание", col_widths[2])
+            calc_id_text = make_cell_text("", col_widths[4], center=True)
+            ras_id_text = make_cell_text("", col_widths[6], center=True)
+            payment_text = make_cell_text("", col_widths[7])
+            error_text = make_cell_text("", col_widths[8])
+
+            # Сохраняем в entry для последующего обновления
             entry = {
                 "num": i,
                 "name": test_name,
@@ -334,29 +306,227 @@ def main(page: ft.Page):
                 "ras_id": "",
                 "payment_url": "",
                 "error_text": "",
+                # ссылки на текстовые контролы для обновления
+                "status_ctrl": status_text,
+                "calc_id_ctrl": calc_id_text,
+                "ras_id_ctrl": ras_id_text,
+                "payment_ctrl": payment_text,
+                "error_ctrl": error_text,
+            }
+            tests_data.append(entry)
+
+            # Собираем ячейки
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(make_cell_container(ft.Text(str(i)), col_widths[0])),
+                    ft.DataCell(make_cell_container(ft.Text(test_name), col_widths[1])),
+                    ft.DataCell(make_cell_container(status_text, col_widths[2])),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[3],
+                            tooltip=ft.Tooltip(message=entry["calc_fullpath"], bgcolor="#757575"),
+                            content=ft.GestureDetector(
+                                content=ft.Text(entry["calc_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
+                                on_double_tap=lambda e, p=entry["calc_fullpath"]: open_file_local(p) if p else None,
+                            ),
+                        )
+                    ),
+                    ft.DataCell(make_cell_container(calc_id_text, col_widths[4], center=True)),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[5],
+                            tooltip=ft.Tooltip(message=entry["ras_fullpath"], bgcolor="#757575"),
+                            content=ft.GestureDetector(
+                                content=ft.Text(entry["ras_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
+                                on_double_tap=lambda e, p=entry["ras_fullpath"]: open_file_local(p) if p else None,
+                            ),
+                        )
+                    ),
+                    ft.DataCell(make_cell_container(ras_id_text, col_widths[6], center=True)),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[7],
+                            on_click=lambda e, url=entry["payment_url"]: webbrowser.open(url) if url else None,
+                            content=payment_text,
+                        )
+                    ),
+                    ft.DataCell(make_cell_container(error_text, col_widths[8])),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[9],
+                            alignment=ft.alignment.Alignment(0, 0),
+                            content=ft.ElevatedButton(
+                                "Запросить",
+                                on_click=lambda e, idx=i-1: print(f"Запрос для строки {idx}"),
+                                width=120,
+                                height=40,
+                            ),
+                        )
+                    ),
+                ]
+            )
+            table.rows.append(row)
+
+        running_tests = False
+        enable_run_button()
+        page.update()
+
+    # Функция обновления текстовых полей (будет вызываться из worker)
+    def update_cells(test):
+        """Обновляет текстовые поля в ячейках на основе данных test"""
+        test["status_ctrl"].value = test["status"]
+        test["calc_id_ctrl"].value = test["calc_id"]
+        test["ras_id_ctrl"].value = test["ras_id"]
+        # Обновление ссылки (меняем url и текст)
+        # payment_url может быть ссылкой, мы обновим текст и on_click
+        test["payment_ctrl"].value = test["payment_url"]
+        # Обновляем обработчик клика для ячейки с оплатой – проще заново не пересоздавать,
+        # а обновить on_click у контейнера. Но т.к. контейнер уже создан, можно просто менять url,
+        # обернув в замыкание. Мы сохраним контейнер payment в test, чтобы обновить его.
+        if "payment_container" in test:
+            # Обновим on_click с новым url
+            test["payment_container"].on_click = lambda e, url=test["payment_url"]: webbrowser.open(url) if url else None
+        test["error_ctrl"].value = test["error_text"]
+
+    # Модифицируем select_folder_and_fill для сохранения контейнера оплаты и обновления
+    # Добавим в entry ссылку на контейнер оплаты
+    # (перепишем строку с оплатой, чтобы сохранить контейнер)
+
+    # Чтобы не усложнять, заменим select_folder_and_fill на версию, которая сохраняет контейнер оплаты
+    # Ниже приведена уже обновлённая версия select_folder_and_fill, которую мы вставим вместо предыдущей.
+    # Скопируем её заново с сохранением payment_container.
+    # (Для краткости я приведу новый select_folder_and_fill полностью)
+
+    # ================== ЗАМЕНА select_folder_and_fill ==================
+    def select_folder_and_fill(e):
+        global running_tests
+        root = Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder = filedialog.askdirectory()
+        root.destroy()
+        if not folder:
+            return
+
+        files = os.listdir(folder)
+        test_dict = {}
+
+        for fname in files:
+            if not os.path.isfile(os.path.join(folder, fname)):
+                continue
+            if "_Калькуляция_" in fname:
+                typ = "Калькуляция"
+                parts = fname.split("_Калькуляция_", 1)
+            elif "_Расчет_" in fname:
+                typ = "Расчет"
+                parts = fname.split("_Расчет_", 1)
+            else:
+                continue
+
+            test_name = parts[0]
+            comment = parts[1] if len(parts) > 1 else ""
+
+            if test_name not in test_dict:
+                test_dict[test_name] = {}
+            if typ == "Калькуляция":
+                test_dict[test_name]['calc'] = fname
+                test_dict[test_name]['calc_fullpath'] = os.path.join(folder, fname)
+            else:
+                test_dict[test_name]['ras'] = fname
+                test_dict[test_name]['ras_fullpath'] = os.path.join(folder, fname)
+
+        tests_data.clear()
+        table.rows.clear()
+        for i, (test_name, files_data) in enumerate(test_dict.items(), start=1):
+            status_text = make_cell_text("Ожидание", col_widths[2])
+            calc_id_text = make_cell_text("", col_widths[4], center=True)
+            ras_id_text = make_cell_text("", col_widths[6], center=True)
+            payment_text = make_cell_text("", col_widths[7])
+            error_text = make_cell_text("", col_widths[8])
+
+            # Контейнер оплаты с ссылкой
+            payment_container = ft.Container(
+                width=col_widths[7],
+                on_click=None,
+                content=payment_text,
+            )
+            # Если есть url, сделаем позже
+
+            entry = {
+                "num": i,
+                "name": test_name,
+                "status": "Ожидание",
+                "calc_file": files_data.get('calc', ''),
+                "calc_fullpath": files_data.get('calc_fullpath', ''),
+                "calc_id": "",
+                "ras_file": files_data.get('ras', ''),
+                "ras_fullpath": files_data.get('ras_fullpath', ''),
+                "ras_id": "",
+                "payment_url": "",
+                "error_text": "",
+                "status_ctrl": status_text,
+                "calc_id_ctrl": calc_id_text,
+                "ras_id_ctrl": ras_id_text,
+                "payment_ctrl": payment_text,
+                "error_ctrl": error_text,
+                "payment_container": payment_container,   # сохраняем контейнер для обновления on_click
             }
             tests_data.append(entry)
 
             row = ft.DataRow(
                 cells=[
-                    ft.DataCell(make_cell_with_tooltip(str(i), col_widths[0])),
-                    ft.DataCell(make_cell_with_tooltip(test_name, col_widths[1])),
-                    ft.DataCell(make_cell_with_tooltip(entry["status"], col_widths[2])),
-                    ft.DataCell(make_file_cell(entry["calc_file"], entry["calc_fullpath"], col_widths[3])),
-                    ft.DataCell(make_cell_with_tooltip(entry["calc_id"], col_widths[4])),
-                    ft.DataCell(make_file_cell(entry["ras_file"], entry["ras_fullpath"], col_widths[5])),
-                    ft.DataCell(make_cell_with_tooltip(entry["ras_id"], col_widths[6])),
-                    ft.DataCell(make_multiline_cell(entry["payment_url"], col_widths[7], url=entry["payment_url"])),
-                    ft.DataCell(make_multiline_cell(entry["error_text"], col_widths[8])),
-                    ft.DataCell(make_request_button(i - 1)),
+                    ft.DataCell(make_cell_container(ft.Text(str(i)), col_widths[0])),
+                    ft.DataCell(make_cell_container(ft.Text(test_name), col_widths[1])),
+                    ft.DataCell(make_cell_container(status_text, col_widths[2])),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[3],
+                            tooltip=ft.Tooltip(message=entry["calc_fullpath"], bgcolor="#757575"),
+                            content=ft.GestureDetector(
+                                content=ft.Text(entry["calc_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
+                                on_double_tap=lambda e, p=entry["calc_fullpath"]: open_file_local(p) if p else None,
+                            ),
+                        )
+                    ),
+                    ft.DataCell(make_cell_container(calc_id_text, col_widths[4], center=True)),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[5],
+                            tooltip=ft.Tooltip(message=entry["ras_fullpath"], bgcolor="#757575"),
+                            content=ft.GestureDetector(
+                                content=ft.Text(entry["ras_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
+                                on_double_tap=lambda e, p=entry["ras_fullpath"]: open_file_local(p) if p else None,
+                            ),
+                        )
+                    ),
+                    ft.DataCell(make_cell_container(ras_id_text, col_widths[6], center=True)),
+                    ft.DataCell(payment_container),
+                    ft.DataCell(make_cell_container(error_text, col_widths[8])),
+                    ft.DataCell(
+                        ft.Container(
+                            width=col_widths[9],
+                            alignment=ft.alignment.Alignment(0, 0),
+                            content=ft.ElevatedButton(
+                                "Запросить",
+                                on_click=lambda e, idx=i-1: print(f"Запрос для строки {idx}"),
+                                width=120,
+                                height=40,
+                            ),
+                        )
+                    ),
                 ]
             )
             table.rows.append(row)
 
+        running_tests = False
+        enable_run_button()
         page.update()
 
     # ──────────────────────────────────────────────
     # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ
+    # ──────────────────────────────────────────────
+    # ──────────────────────────────────────────────
+    # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ (с page.run_thread)
     # ──────────────────────────────────────────────
     def run_all_tests(e):
         global running_tests
@@ -374,16 +544,16 @@ def main(page: ft.Page):
 
             for i, test in enumerate(tests_data):
                 test["status"] = "Выполняется"
-                test["error_text"] = ""
                 test["calc_id"] = ""
-                update_table_row(i, test)
+                test["error_text"] = ""
+                update_cells(test)
                 page.update()
 
                 calc_path = test.get("calc_fullpath", "")
                 if not calc_path or not os.path.isfile(calc_path):
                     test["status"] = "Ошибка"
                     test["error_text"] = "Файл не найден"
-                    update_table_row(i, test)
+                    update_cells(test)
                     page.update()
                     continue
 
@@ -391,6 +561,19 @@ def main(page: ft.Page):
                     with open(calc_path, "r", encoding="utf-8") as f:
                         content = f.read()
                     json_obj = json.loads(content)
+
+                    # ── Автозаполнение дат ──
+                    tomorrow = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+                    if "dateStart" in json_obj:
+                        json_obj["dateStart"] = tomorrow
+                    if "usagePeriod" in json_obj and isinstance(json_obj["usagePeriod"], list) and len(json_obj["usagePeriod"]) == 1:
+                        period = json_obj["usagePeriod"][0]
+                        period["dateStart"] = tomorrow
+                        dt_tomorrow = datetime.strptime(tomorrow, "%Y-%m-%d")
+                        dt_end = dt_tomorrow.replace(year=dt_tomorrow.year + 1) - timedelta(days=1)
+                        period["dateEnd"] = dt_end.strftime("%Y-%m-%d")
+                    # ─────────────────────────
+
                     form_data = flatten_json(json_obj)
                     form_data["key"] = key_value
 
@@ -399,12 +582,15 @@ def main(page: ft.Page):
                     if resp.status_code == 200:
                         try:
                             parsed = resp.json()
-                            data_ids = parsed.get("data", [])
-                            if isinstance(data_ids, list) and len(data_ids) > 0:
-                                test["calc_id"] = str(data_ids[0])
+                            data_val = parsed.get("data", [])
+                            msg = parsed.get("message", "")
+                            if isinstance(data_val, list) and len(data_val) > 0:
+                                test["calc_id"] = str(data_val[0])
                             else:
                                 test["calc_id"] = ""
-                            test["status"] = "Успешно"
+                            test["status"] = "Успешно" if parsed.get("result") else "Ошибка"
+                            if not parsed.get("result"):
+                                test["error_text"] = msg
                         except Exception:
                             test["status"] = "Ошибка"
                             test["error_text"] = "Неверный JSON ответ"
@@ -415,7 +601,7 @@ def main(page: ft.Page):
                     test["status"] = "Ошибка"
                     test["error_text"] = str(ex)
 
-                update_table_row(i, test)
+                update_cells(test)
                 page.update()
 
             run_all_tests_btn.disabled = False
@@ -423,25 +609,10 @@ def main(page: ft.Page):
             running_tests = False
             page.update()
 
-        threading.Thread(target=worker, daemon=True).start()
-
-    def update_table_row(index, test):
-        cells = [
-            ft.DataCell(make_cell_with_tooltip(str(test["num"]), col_widths[0])),
-            ft.DataCell(make_cell_with_tooltip(test["name"], col_widths[1])),
-            ft.DataCell(make_cell_with_tooltip(test["status"], col_widths[2])),
-            ft.DataCell(make_file_cell(test["calc_file"], test["calc_fullpath"], col_widths[3])),
-            ft.DataCell(make_cell_with_tooltip(test["calc_id"], col_widths[4])),
-            ft.DataCell(make_file_cell(test["ras_file"], test["ras_fullpath"], col_widths[5])),
-            ft.DataCell(make_cell_with_tooltip(test["ras_id"], col_widths[6])),
-            ft.DataCell(make_multiline_cell(test["payment_url"], col_widths[7], url=test["payment_url"])),
-            ft.DataCell(make_multiline_cell(test["error_text"], col_widths[8])),
-            ft.DataCell(make_request_button(index)),
-        ]
-        if index < len(table.rows):
-            table.rows[index].cells = cells
-
-    # Теперь создаём кнопки (функция run_all_tests уже определена)
+        # Запускаем worker через page.run_thread – это гарантирует, что page.update() будет работать
+        page.run_thread(worker)
+        
+    # Кнопки действий
     run_all_tests_btn = ft.ElevatedButton(
         "Запустить все тесты",
         on_click=run_all_tests,
@@ -460,23 +631,9 @@ def main(page: ft.Page):
         activate_all_btn.disabled = not has_rows
         page.update()
 
-    original_select_folder_and_fill = select_folder_and_fill
+    # Обёртка для заполнения папки
     def select_folder_and_fill_wrapper(e):
-        original_select_folder_and_fill(e)
-        enable_run_button()
-
-    auto_container.controls = [
-        ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
-        ft.Row([
-            ft.ElevatedButton("Заполнить таблицу из папки", on_click=select_folder_and_fill_wrapper),
-            run_all_tests_btn,
-            activate_all_btn,
-        ]),
-        ft.Divider(),
-        ft.Text("Результаты тестов:", weight=ft.FontWeight.BOLD),
-        ft.Row([table], scroll=ft.ScrollMode.AUTO),
-    ]
-
+        select_folder_and_fill(e)
 
     auto_container.controls = [
         ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
@@ -515,7 +672,6 @@ def main(page: ft.Page):
         ft.Text("Настройки эндпоинтов", weight=ft.FontWeight.BOLD, size=16),
         ft.Text("Укажите относительные пути (или полные URL) для каждого запроса."),
     ] + settings_rows
-
 
     # ──────────────────────────────────────────────
     # Начальное состояние
