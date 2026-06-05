@@ -2,24 +2,61 @@ import flet as ft
 import requests
 import os
 import json
+import webbrowser
 from tkinter import Tk, filedialog
+
+# Утилита для преобразования JSON в плоские поля (owner[name] и т.д.)
+def flatten_json(obj, parent_key=''):
+    items = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            new_key = f"{parent_key}[{k}]" if parent_key else k
+            items.update(flatten_json(v, new_key))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            new_key = f"{parent_key}[{i}]"
+            items.update(flatten_json(v, new_key))
+    else:
+        items[parent_key] = str(obj) if not isinstance(obj, str) else obj
+    return items
 
 def main(page: ft.Page):
     page.title = "API Tester"
-    page.window_width = 550
-    page.window_height = 600
+    page.window_width = 800
+    page.window_height = 700
 
-    # ---- Поля для URL ----
+    # ──────────────────────────────────────────────
+    # Контейнеры для трёх режимов
+    # ──────────────────────────────────────────────
+    manual_container = ft.Column()
+    auto_container = ft.Column()
+    settings_container = ft.Column()
+
+    # ──────────────────────────────────────────────
+    # Кнопки переключения режимов
+    # ──────────────────────────────────────────────
+    manual_btn = ft.ElevatedButton("Ручной запрос", on_click=lambda e: switch_mode(0))
+    auto_btn = ft.ElevatedButton("Автотесты", on_click=lambda e: switch_mode(1))
+    settings_btn = ft.ElevatedButton("Настройки", on_click=lambda e: switch_mode(2))
+
+    def switch_mode(index):
+        manual_container.visible = (index == 0)
+        auto_container.visible = (index == 1)
+        settings_container.visible = (index == 2)
+        manual_btn.disabled = (index == 0)
+        auto_btn.disabled = (index == 1)
+        settings_btn.disabled = (index == 2)
+        page.update()
+
+    # ──────────────────────────────────────────────
+    # РУЧНОЙ РЕЖИМ (без изменений)
+    # ──────────────────────────────────────────────
     base_url_field = ft.TextField(label="Базовый URL", width=420,
                                   value="https://test-api-eosago.renins.com")
     endpoint_field = ft.TextField(label="Путь (endpoint)", width=420,
-                                  value="/calculate/")  # пример, можно оставить пустым
-
-    # ---- Метод запроса ----
+                                  value="/calculate/")
     method_dropdown = ft.Dropdown(
-        label="Метод",
-        width=100,
-        value="GET",
+        label="Метод", width=100, value="POST",
         options=[
             ft.dropdown.Option("GET"),
             ft.dropdown.Option("POST"),
@@ -28,12 +65,6 @@ def main(page: ft.Page):
         ],
     )
 
-       # ---- Авторизация API Key (Query) ----
-    api_key_name = ft.TextField(label="Имя параметра (key)", width=200, value="key")
-    api_key_value = ft.TextField(label="Значение ключа", width=300, password=True,
-    value="SECRET_KEY_DEMO")  # сразу подставим демо-ключ
-
-    # ---- Выбор файла с данными (для POST/PUT) ----
     selected_file_label = ft.Text("Файл не выбран", italic=True)
 
     def pick_file_dialog(e):
@@ -42,24 +73,18 @@ def main(page: ft.Page):
         root.attributes('-topmost', True)
         file_path = filedialog.askopenfilename()
         root.destroy()
-        if file_path:
-            selected_file_label.value = file_path
-        else:
-            selected_file_label.value = "Файл не выбран"
+        selected_file_label.value = file_path if file_path else "Файл не выбран"
         page.update()
 
- 
-    # ---- Область ответа ----
+    api_key_name = ft.TextField(label="Имя параметра (key)", width=200, value="key")
+    api_key_value = ft.TextField(label="Значение ключа", width=300, password=True,
+                                 value="SECRET_KEY_DEMO")
+
     response_area = ft.TextField(
-        label="Ответ сервера",
-        multiline=True,
-        min_lines=6,
-        max_lines=12,
-        read_only=True,
-        width=500,
+        label="Ответ сервера", multiline=True,
+        min_lines=6, max_lines=12, read_only=True, width=500,
     )
 
-    # ---- Отправка запроса ----
     def send_request(e):
         base = base_url_field.value.strip().rstrip("/")
         endpoint = endpoint_field.value.strip()
@@ -68,14 +93,8 @@ def main(page: ft.Page):
             page.update()
             return
 
-        if endpoint:
-            url = base + "/" + endpoint.lstrip("/")
-        else:
-            url = base
-
-        method = method_dropdown.value
+        url = f"{base}/{endpoint.lstrip('/')}" if endpoint else base
         headers = {}
-
         file_path = selected_file_label.value
         form_data = {}
 
@@ -84,21 +103,6 @@ def main(page: ft.Page):
                 with open(file_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 json_obj = json.loads(content)
-
-                def flatten_json(obj, parent_key=''):
-                    items = {}
-                    if isinstance(obj, dict):
-                        for k, v in obj.items():
-                            new_key = f"{parent_key}[{k}]" if parent_key else k
-                            items.update(flatten_json(v, new_key))
-                    elif isinstance(obj, list):
-                        for i, v in enumerate(obj):
-                            new_key = f"{parent_key}[{i}]"
-                            items.update(flatten_json(v, new_key))
-                    else:
-                        items[parent_key] = str(obj) if not isinstance(obj, str) else obj
-                    return items
-
                 form_data = flatten_json(json_obj)
                 form_data["key"] = api_key_value.value
             except Exception as ex:
@@ -112,7 +116,6 @@ def main(page: ft.Page):
 
         try:
             resp = requests.post(url, headers=headers, data=form_data, timeout=10)
-
             if resp is not None:
                 try:
                     parsed = resp.json()
@@ -127,12 +130,10 @@ def main(page: ft.Page):
 
         page.update()
 
-    # ---- Сборка интерфейса ----
-    page.add(
+    manual_container.controls = [
         ft.Text("URL и метод", weight=ft.FontWeight.BOLD),
-        ft.Row([base_url_field, api_key_value]),
+        base_url_field,
         ft.Row([endpoint_field, method_dropdown]),
-       # ft.Row([api_key_name, api_key_value]),
         ft.Divider(),
         ft.Text("Данные запроса", weight=ft.FontWeight.BOLD),
         ft.Row([
@@ -140,9 +141,198 @@ def main(page: ft.Page):
             selected_file_label,
         ]),
         ft.Divider(),
-        
+        ft.Text("Авторизация (API Key в Query)", weight=ft.FontWeight.BOLD),
+        ft.Row([api_key_name, api_key_value]),
+        ft.Divider(),
         ft.ElevatedButton("Отправить запрос", on_click=send_request),
         response_area,
+    ]
+
+    # ──────────────────────────────────────────────
+    # АВТОТЕСТЫ (улучшенная таблица с кликабельными ссылками)
+    # ──────────────────────────────────────────────
+    import webbrowser
+
+    tests_data = []
+
+    # Ширины колонок
+    col_widths = [30, 130, 90, 150, 95, 150, 95, 250, 280, 130]
+
+    def make_header(text, width):
+        return ft.Container(
+            width=width,
+            alignment=ft.alignment.Alignment(0, 0),
+            content=ft.Text(text, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+        )
+
+    table = ft.DataTable(
+        columns=[
+            ft.DataColumn(make_header("№", col_widths[0])),
+            ft.DataColumn(make_header("Наименование теста", col_widths[1])),
+            ft.DataColumn(make_header("Текущий статус", col_widths[2])),
+            ft.DataColumn(make_header("Первый файл", col_widths[3])),
+            ft.DataColumn(make_header("ID калькуляции", col_widths[4])),
+            ft.DataColumn(make_header("Второй файл", col_widths[5])),
+            ft.DataColumn(make_header("ID расчёта", col_widths[6])),
+            ft.DataColumn(make_header("Ссылка на оплату", col_widths[7])),
+            ft.DataColumn(make_header("Текст ошибки", col_widths[8])),
+            ft.DataColumn(make_header("Печатная форма", col_widths[9])),
+        ],
+        rows=[],
+        column_spacing=0,
+    )
+
+    # Обычная ячейка с обрезанием и тултипом
+    def make_cell_with_tooltip(text, width, tooltip_text=None):
+        tooltip = None
+        if tooltip_text:
+            tooltip = ft.Tooltip(
+                message=tooltip_text,
+                bgcolor="#757575",   # серый фон
+            )
+        return ft.Container(
+            width=width,
+            tooltip=tooltip,
+            content=ft.Text(
+                text,
+                overflow=ft.TextOverflow.ELLIPSIS,
+                no_wrap=True,
+            ),
+        )
+
+    # Ячейка для длинного текста с переносом
+    def make_multiline_cell(text, width, url=None):
+        if url:
+            # Кликабельная ссылка: контейнер с on_click, открывающий браузер
+            return ft.Container(
+                width=width,
+                on_click=lambda e: webbrowser.open(url),
+                content=ft.Text(
+                    text,
+                    overflow=ft.TextOverflow.VISIBLE,
+                    no_wrap=False,
+                    color=ft.colors.BLUE,
+                    style=ft.TextStyle(decoration=ft.TextDecoration.UNDERLINE),
+                ),
+            )
+        else:
+            return ft.Container(
+                width=width,
+                content=ft.Text(
+                    text,
+                    overflow=ft.TextOverflow.VISIBLE,
+                    no_wrap=False,
+                ),
+            )
+
+    # Кнопка "Запросить"
+    def make_request_button(row_index):
+        return ft.Container(
+            width=col_widths[9],
+            alignment=ft.alignment.Alignment(0, 0),
+            content=ft.ElevatedButton(
+                "Запросить",
+                on_click=lambda e, idx=row_index: print(f"Запрос для строки {idx}"),
+                width=120,
+                height=40,
+            ),
+        )
+
+    def select_folder_and_fill(e):
+        root = Tk()
+        root.withdraw()
+        root.attributes('-topmost', True)
+        folder = filedialog.askdirectory()
+        root.destroy()
+        if not folder:
+            return
+
+        files = os.listdir(folder)
+        test_dict = {}
+
+        for fname in files:
+            if not os.path.isfile(os.path.join(folder, fname)):
+                continue
+            if "_Калькуляция_" in fname:
+                typ = "Калькуляция"
+                parts = fname.split("_Калькуляция_", 1)
+            elif "_Расчет_" in fname:
+                typ = "Расчет"
+                parts = fname.split("_Расчет_", 1)
+            else:
+                continue
+
+            test_name = parts[0]
+            comment = parts[1] if len(parts) > 1 else ""
+
+            if test_name not in test_dict:
+                test_dict[test_name] = {}
+            if typ == "Калькуляция":
+                test_dict[test_name]['calc'] = fname
+                test_dict[test_name]['calc_comment'] = comment
+            else:
+                test_dict[test_name]['ras'] = fname
+                test_dict[test_name]['ras_comment'] = comment
+
+        tests_data.clear()
+        table.rows.clear()
+        for i, (test_name, files_data) in enumerate(test_dict.items(), start=1):
+            entry = {
+                "num": i,
+                "name": test_name,
+                "status": "Ожидание",
+                "calc_file": files_data.get('calc', ''),
+                "calc_id": "",
+                "ras_file": files_data.get('ras', ''),
+                "ras_id": "",
+                "payment_url": "",
+                "error_text": "",
+            }
+            tests_data.append(entry)
+
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(make_cell_with_tooltip(str(i), col_widths[0])),
+                    ft.DataCell(make_cell_with_tooltip(test_name, col_widths[1])),
+                    ft.DataCell(make_cell_with_tooltip(entry["status"], col_widths[2])),
+                    ft.DataCell(make_cell_with_tooltip(entry["calc_file"], col_widths[3], tooltip_text=entry["calc_file"])),
+                    ft.DataCell(make_cell_with_tooltip(entry["calc_id"], col_widths[4])),
+                    ft.DataCell(make_cell_with_tooltip(entry["ras_file"], col_widths[5], tooltip_text=entry["ras_file"])),
+                    ft.DataCell(make_cell_with_tooltip(entry["ras_id"], col_widths[6])),
+                    ft.DataCell(make_multiline_cell(entry["payment_url"], col_widths[7], url=entry["payment_url"])),
+                    ft.DataCell(make_multiline_cell(entry["error_text"], col_widths[8])),
+                    ft.DataCell(make_request_button(i - 1)),
+                ]
+            )
+            table.rows.append(row)
+
+        page.update()
+
+    auto_container.controls = [
+        ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
+        ft.Row([
+            ft.ElevatedButton("Заполнить таблицу из папки", on_click=select_folder_and_fill),
+        ]),
+        ft.Divider(),
+        ft.Text("Результаты тестов:", weight=ft.FontWeight.BOLD),
+        ft.Row([table], scroll=ft.ScrollMode.AUTO),
+    ]
+
+    # ──────────────────────────────────────────────
+    # Начальное состояние
+    # ──────────────────────────────────────────────
+    manual_container.visible = True
+    auto_container.visible = False
+    settings_container.visible = False
+    manual_btn.disabled = True
+    auto_btn.disabled = False
+    settings_btn.disabled = False
+
+    page.add(
+        ft.Row([manual_btn, auto_btn, settings_btn]),
+        manual_container,
+        auto_container,
+        settings_container,
     )
 
 ft.app(target=main)
