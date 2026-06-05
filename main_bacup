@@ -5,10 +5,7 @@ import json
 import webbrowser
 import subprocess
 import platform
-import threading
 from tkinter import Tk, filedialog
-
-running_tests = False   # <-- глобальный флаг
 
 # Утилита для преобразования JSON в плоские поля (owner[name] и т.д.)
 def flatten_json(obj, parent_key=''):
@@ -355,96 +352,10 @@ def main(page: ft.Page):
 
         page.update()
 
-    # ──────────────────────────────────────────────
-    # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ
-    # ──────────────────────────────────────────────
-    def run_all_tests(e):
-        global running_tests
-        if running_tests:
-            return
-        running_tests = True
-        run_all_tests_btn.disabled = True
-        activate_all_btn.disabled = True
-        page.update()
-
-        def worker():
-            base_url = base_url_field.value.strip().rstrip("/")
-            key_value = api_key_value.value
-            endpoint = method_endpoint_fields["Создание заявки на расчёт"].value.strip()
-
-            for i, test in enumerate(tests_data):
-                test["status"] = "Выполняется"
-                test["error_text"] = ""
-                test["calc_id"] = ""
-                update_table_row(i, test)
-                page.update()
-
-                calc_path = test.get("calc_fullpath", "")
-                if not calc_path or not os.path.isfile(calc_path):
-                    test["status"] = "Ошибка"
-                    test["error_text"] = "Файл не найден"
-                    update_table_row(i, test)
-                    page.update()
-                    continue
-
-                try:
-                    with open(calc_path, "r", encoding="utf-8") as f:
-                        content = f.read()
-                    json_obj = json.loads(content)
-                    form_data = flatten_json(json_obj)
-                    form_data["key"] = key_value
-
-                    url = f"{base_url}/{endpoint.lstrip('/')}" if endpoint else base_url
-                    resp = requests.post(url, data=form_data, timeout=10)
-                    if resp.status_code == 200:
-                        try:
-                            parsed = resp.json()
-                            data_ids = parsed.get("data", [])
-                            if isinstance(data_ids, list) and len(data_ids) > 0:
-                                test["calc_id"] = str(data_ids[0])
-                            else:
-                                test["calc_id"] = ""
-                            test["status"] = "Успешно"
-                        except Exception:
-                            test["status"] = "Ошибка"
-                            test["error_text"] = "Неверный JSON ответ"
-                    else:
-                        test["status"] = "Ошибка"
-                        test["error_text"] = f"HTTP {resp.status_code} : {resp.text[:200]}"
-                except Exception as ex:
-                    test["status"] = "Ошибка"
-                    test["error_text"] = str(ex)
-
-                update_table_row(i, test)
-                page.update()
-
-            run_all_tests_btn.disabled = False
-            activate_all_btn.disabled = False
-            running_tests = False
-            page.update()
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def update_table_row(index, test):
-        cells = [
-            ft.DataCell(make_cell_with_tooltip(str(test["num"]), col_widths[0])),
-            ft.DataCell(make_cell_with_tooltip(test["name"], col_widths[1])),
-            ft.DataCell(make_cell_with_tooltip(test["status"], col_widths[2])),
-            ft.DataCell(make_file_cell(test["calc_file"], test["calc_fullpath"], col_widths[3])),
-            ft.DataCell(make_cell_with_tooltip(test["calc_id"], col_widths[4])),
-            ft.DataCell(make_file_cell(test["ras_file"], test["ras_fullpath"], col_widths[5])),
-            ft.DataCell(make_cell_with_tooltip(test["ras_id"], col_widths[6])),
-            ft.DataCell(make_multiline_cell(test["payment_url"], col_widths[7], url=test["payment_url"])),
-            ft.DataCell(make_multiline_cell(test["error_text"], col_widths[8])),
-            ft.DataCell(make_request_button(index)),
-        ]
-        if index < len(table.rows):
-            table.rows[index].cells = cells
-
-    # Теперь создаём кнопки (функция run_all_tests уже определена)
+    # Кнопки действий (изначально неактивны)
     run_all_tests_btn = ft.ElevatedButton(
         "Запустить все тесты",
-        on_click=run_all_tests,
+        on_click=lambda e: print("Запуск всех тестов (заглушка)"),
         disabled=True,
     )
 
@@ -455,28 +366,17 @@ def main(page: ft.Page):
     )
 
     def enable_run_button():
+        # Включаем кнопки, если в таблице есть хотя бы одна строка
         has_rows = len(tests_data) > 0
         run_all_tests_btn.disabled = not has_rows
         activate_all_btn.disabled = not has_rows
         page.update()
 
+    # Модифицируем select_folder_and_fill, чтобы после заполнения вызывалась enable_run_button
     original_select_folder_and_fill = select_folder_and_fill
     def select_folder_and_fill_wrapper(e):
         original_select_folder_and_fill(e)
         enable_run_button()
-
-    auto_container.controls = [
-        ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
-        ft.Row([
-            ft.ElevatedButton("Заполнить таблицу из папки", on_click=select_folder_and_fill_wrapper),
-            run_all_tests_btn,
-            activate_all_btn,
-        ]),
-        ft.Divider(),
-        ft.Text("Результаты тестов:", weight=ft.FontWeight.BOLD),
-        ft.Row([table], scroll=ft.ScrollMode.AUTO),
-    ]
-
 
     auto_container.controls = [
         ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
