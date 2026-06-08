@@ -442,7 +442,16 @@ def main(page: ft.Page):
             calc_id_text = make_cell_text("", col_widths[4], center=True)
             ras_id_text = make_cell_text("", col_widths[6], center=True)
             payment_text = make_cell_text("", col_widths[7])
-            error_text = ft.Text( "", overflow=ft.TextOverflow.VISIBLE, no_wrap=False,)
+            error_text = ft.TextField(
+                value="",
+                read_only=True,
+                multiline=True,
+                min_lines=1,
+                max_lines=3,
+                border="none",
+                text_style=ft.TextStyle(size=12),
+                width=col_widths[8],
+            )
 
             # Контейнер оплаты с ссылкой
             payment_container = ft.Container(
@@ -541,7 +550,7 @@ def main(page: ft.Page):
             base_url = base_url_field.value.strip().rstrip("/")
             key_value = api_key_value.value
 
-            # Читаем настройки повторов (с проверкой)
+            # Читаем настройки
             try:
                 max_retries = int(retry_count_field.value)
             except:
@@ -550,9 +559,18 @@ def main(page: ft.Page):
                 retry_delay = float(retry_delay_field.value)
             except:
                 retry_delay = 3.0
+            try:
+                request_timeout = float(timeout_field.value)
+            except:
+                request_timeout = 30.0
+            try:
+                poll_interval = float(status_poll_interval_field.value)
+            except:
+                poll_interval = 10.0
 
+            # Этап 1 и 2 для всех строк
             for i, test in enumerate(tests_data):
-                # ── Этап 1: Калькуляция ──────────────────────────────
+                # ── Этап 1: Калькуляция ──
                 test["status"] = "Выполняется расчёт"
                 test["error_text"] = ""
                 test["calc_id"] = ""
@@ -588,7 +606,7 @@ def main(page: ft.Page):
 
                     endpoint = method_endpoint_fields["Создание заявки на расчёт"].value.strip()
                     url = f"{base_url}/{endpoint.lstrip('/')}" if endpoint else base_url
-                    resp = requests.post(url, data=form_data, timeout=10)
+                    resp = requests.post(url, data=form_data, timeout=request_timeout)
 
                     if resp.status_code == 200:
                         try:
@@ -631,7 +649,69 @@ def main(page: ft.Page):
                     page.update()
                     continue
 
-                # ── Этап 2: Создание договора (с повторными попытками) ──
+                # ── Новый этап: проверка статуса калькуляции с повторами ──
+                test["status"] = "Проверка статуса"
+                update_cells(test)
+                page.update()
+
+                calc_template = method_endpoint_fields["Получение статуса калькуляции"].value.strip()
+                calc_url_path = calc_template.replace("{id}", test["calc_id"])
+                calc_status_url = f"{base_url}/{calc_url_path.lstrip('/')}?key={key_value}"
+
+                calc_status_ok = False
+                calc_final_error = ""
+                for calc_attempt in range(1, max_retries + 1):
+                    try:
+                        resp_calc_status = requests.get(calc_status_url, timeout=request_timeout)
+                        if resp_calc_status.status_code == 200:
+                            calc_status = resp_calc_status.json()
+                            if calc_status.get("result") == True:
+                                calc_status_ok = True
+                                break
+                            else:
+                                # result == false
+                                msg = calc_status.get("data", "")
+                                if isinstance(msg, str) and "Расчет не окончен (A)" in msg:
+                                    # промежуточный статус, ждем и повторяем
+                                    if calc_attempt < max_retries:
+                                        time.sleep(retry_delay)
+                                        continue
+                                    else:
+                                        calc_final_error = f"Исчерпаны попытки: {msg}"
+                                        break
+                                else:
+                                    # другая ошибка – сразу финал
+                                    if isinstance(msg, str):
+                                        calc_final_error = msg
+                                    elif isinstance(msg, (dict, list)):
+                                        calc_final_error = json.dumps(msg, ensure_ascii=False)
+                                    else:
+                                        calc_final_error = str(msg) if msg else "Неизвестная ошибка статуса"
+                                    break
+                        else:
+                            # HTTP ошибка – можно повторить
+                            if calc_attempt < max_retries:
+                                time.sleep(retry_delay)
+                                continue
+                            else:
+                                calc_final_error = f"HTTP {resp_calc_status.status_code} : {resp_calc_status.text[:200]}"
+                                break
+                    except Exception as ex:
+                        if calc_attempt < max_retries:
+                            time.sleep(retry_delay)
+                            continue
+                        else:
+                            calc_final_error = f"Ошибка запроса: {str(ex)}"
+                            break
+
+                if not calc_status_ok:
+                    test["status"] = "Ошибка"
+                    test["error_text"] = calc_final_error if calc_final_error else "Не удалось проверить статус калькуляции"
+                    update_cells(test)
+                    page.update()
+                    continue
+                # иначе успех – продолжаем к этапу 2 (создание договора)
+                # ── Этап 2: Создание договора ──
                 test["status"] = "Создание договора"
                 update_cells(test)
                 page.update()
@@ -649,8 +729,9 @@ def main(page: ft.Page):
                         content = f.read()
                     json_ras = json.loads(content)
 
-                    json_ras["calculationId"] = test["calc_id"]
-                    json_ras["key"] = key_value
+                    form_data_ras = flatten_json(json_ras)
+                    form_data_ras["calculationId"] = test["calc_id"]
+                    form_data_ras["key"] = key_value
 
                     endpoint2 = method_endpoint_fields["Создание договора"].value.strip()
                     url2 = f"{base_url}/{endpoint2.lstrip('/')}" if endpoint2 else base_url
@@ -659,7 +740,7 @@ def main(page: ft.Page):
                     last_error = ""
 
                     for attempt in range(1, max_retries + 1):
-                        resp2 = requests.post(url2, data=json_ras, timeout=10)
+                        resp2 = requests.post(url2, data=form_data_ras, timeout=request_timeout)
 
                         if resp2.status_code == 200:
                             try:
@@ -711,12 +792,49 @@ def main(page: ft.Page):
                 update_cells(test)
                 page.update()
 
+            # ── Этап 3: Опрос статуса договора для строк с policyId ──
+            while True:
+                any_pending = False
+                for test in tests_data:
+                    if test["ras_id"] and test["status"] not in ("Ошибка", "Готов"):
+                        any_pending = True
+                        endpoint_template = method_endpoint_fields["Получение статуса договора"].value.strip()
+                        path = endpoint_template.replace("{policyId}", test["ras_id"])
+                        status_url = f"{base_url}/{path.lstrip('/')}?key={key_value}"
+
+                        try:
+                            resp = requests.get(status_url, timeout=request_timeout)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                result = data.get("result")
+                                if result == True:
+                                    test["status"] = "Готов"
+                                elif result == False:
+                                    msg = data.get("message", "")
+                                    if "Ожидание проверки в РСА" in msg:
+                                        test["status"] = "Проверка РСА"
+                                    else:
+                                        test["status"] = "Ошибка"
+                                        test["error_text"] = msg
+                                # иначе промежуточный статус
+                            # игнорируем ошибки сети – повторим позже
+                        except Exception:
+                            pass
+
+                        update_cells(test)
+                        page.update()
+
+                if not any_pending:
+                    break
+
+                time.sleep(poll_interval)
+
             run_all_tests_btn.disabled = False
             activate_all_btn.disabled = False
             running_tests = False
             page.update()
 
-        # Запускаем worker через page.run_thread – это гарантирует, что page.update() будет работать
+        # Запускаем worker через page.run_thread
         page.run_thread(worker)
 
     # Кнопки действий
@@ -759,8 +877,9 @@ def main(page: ft.Page):
     # ──────────────────────────────────────────────
     default_endpoints = {
         "Создание заявки на расчёт": "/calculate/",
+        "Получение статуса калькуляции": "/calculate/{id}/", 
         "Создание договора": "/create/",
-        "Получение статуса договора": "/contract_status/",
+        "Получение статуса договора": "/policy/{policyId}/status/",
         "Ссылка на форму оплаты": "/payment_link/",
         "Получение ПДФ образца": "/pdf_sample/",
         "Перевод в действующие": "/activate/",
@@ -780,15 +899,24 @@ def main(page: ft.Page):
     retry_delay_field = ft.TextField(label="Пауза между попытками (сек)", value="3", width=200)
 
     # Добавляем их в тот же список settings_rows
+    # Тайм-аут для запросов
+    timeout_field = ft.TextField(label="Тайм-аут запроса (сек)", value="30", width=200)
+    
+    # Интервал опроса статуса
+    status_poll_interval_field = ft.TextField(label="Интервал опроса статуса (сек)", value="10", width=200)
+
     settings_rows.append(ft.Divider())
     settings_rows.append(ft.Text("Параметры повторов", weight=ft.FontWeight.BOLD))
     settings_rows.append(ft.Row([retry_count_field, retry_delay_field]))
+    settings_rows.append(ft.Row([status_poll_interval_field]))
+    settings_rows.append(ft.Row([timeout_field])) 
 
     # Теперь финальное присваивание – всё попадёт на экран
     settings_container.controls = [
         ft.Text("Настройки эндпоинтов", weight=ft.FontWeight.BOLD, size=16),
         ft.Text("Укажите относительные пути (или полные URL) для каждого запроса."),
     ] + settings_rows
+
 
     # ──────────────────────────────────────────────
     # Начальное состояние
