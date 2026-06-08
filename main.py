@@ -6,6 +6,7 @@ import webbrowser
 import subprocess
 import platform
 import time
+import base64
 from tkinter import Tk, filedialog
 from datetime import datetime, timedelta
 
@@ -290,158 +291,7 @@ def main(page: ft.Page):
             status_text = make_cell_text("Ожидание", col_widths[2])
             calc_id_text = make_cell_text("", col_widths[4], center=True)
             ras_id_text = make_cell_text("", col_widths[6], center=True)
-            payment_text = make_cell_text("", col_widths[7])
-            error_text = make_cell_text("", col_widths[8])
-
-            # Сохраняем в entry для последующего обновления
-            entry = {
-                "num": i,
-                "name": test_name,
-                "status": "Ожидание",
-                "calc_file": files_data.get('calc', ''),
-                "calc_fullpath": files_data.get('calc_fullpath', ''),
-                "calc_id": "",
-                "ras_file": files_data.get('ras', ''),
-                "ras_fullpath": files_data.get('ras_fullpath', ''),
-                "ras_id": "",
-                "payment_url": "",
-                "error_text": "",
-                # ссылки на текстовые контролы для обновления
-                "status_ctrl": status_text,
-                "calc_id_ctrl": calc_id_text,
-                "ras_id_ctrl": ras_id_text,
-                "payment_ctrl": payment_text,
-                "error_ctrl": error_text,
-            }
-            tests_data.append(entry)
-
-            # Собираем ячейки
-            row = ft.DataRow(
-                cells=[
-                    ft.DataCell(make_cell_container(ft.Text(str(i)), col_widths[0])),
-                    ft.DataCell(make_cell_container(ft.Text(test_name), col_widths[1])),
-                    ft.DataCell(make_cell_container(status_text, col_widths[2])),
-                    ft.DataCell(
-                        ft.Container(
-                            width=col_widths[3],
-                            tooltip=ft.Tooltip(message=entry["calc_fullpath"], bgcolor="#757575"),
-                            content=ft.GestureDetector(
-                                content=ft.Text(entry["calc_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
-                                on_double_tap=lambda e, p=entry["calc_fullpath"]: open_file_local(p) if p else None,
-                            ),
-                        )
-                    ),
-                    ft.DataCell(make_cell_container(calc_id_text, col_widths[4], center=True)),
-                    ft.DataCell(
-                        ft.Container(
-                            width=col_widths[5],
-                            tooltip=ft.Tooltip(message=entry["ras_fullpath"], bgcolor="#757575"),
-                            content=ft.GestureDetector(
-                                content=ft.Text(entry["ras_file"], overflow=ft.TextOverflow.ELLIPSIS, no_wrap=True),
-                                on_double_tap=lambda e, p=entry["ras_fullpath"]: open_file_local(p) if p else None,
-                            ),
-                        )
-                    ),
-                    ft.DataCell(make_cell_container(ras_id_text, col_widths[6], center=True)),
-                    ft.DataCell(
-                        ft.Container(
-                            width=col_widths[7],
-                            on_click=lambda e, url=entry["payment_url"]: webbrowser.open(url) if url else None,
-                            content=payment_text,
-                        )
-                    ),
-                    ft.DataCell(make_cell_container(error_text, col_widths[8])),
-                    ft.DataCell(
-                        ft.Container(
-                            width=col_widths[9],
-                            alignment=ft.alignment.Alignment(0, 0),
-                            content=ft.ElevatedButton(
-                                "Запросить",
-                                on_click=lambda e, idx=i-1: print(f"Запрос для строки {idx}"),
-                                width=120,
-                                height=40,
-                            ),
-                        )
-                    ),
-                ]
-            )
-            table.rows.append(row)
-
-        running_tests = False
-        enable_run_button()
-        page.update()
-
-    # Функция обновления текстовых полей (будет вызываться из worker)
-    def update_cells(test):
-        """Обновляет текстовые поля в ячейках на основе данных test"""
-        test["status_ctrl"].value = test["status"]
-        test["calc_id_ctrl"].value = test["calc_id"]
-        test["ras_id_ctrl"].value = test["ras_id"]
-        # Обновление ссылки (меняем url и текст)
-        # payment_url может быть ссылкой, мы обновим текст и on_click
-        test["payment_ctrl"].value = test["payment_url"]
-        # Обновляем обработчик клика для ячейки с оплатой – проще заново не пересоздавать,
-        # а обновить on_click у контейнера. Но т.к. контейнер уже создан, можно просто менять url,
-        # обернув в замыкание. Мы сохраним контейнер payment в test, чтобы обновить его.
-        if "payment_container" in test:
-            # Обновим on_click с новым url
-            test["payment_container"].on_click = lambda e, url=test["payment_url"]: webbrowser.open(url) if url else None
-        test["error_ctrl"].value = test["error_text"]
-
-    # Модифицируем select_folder_and_fill для сохранения контейнера оплаты и обновления
-    # Добавим в entry ссылку на контейнер оплаты
-    # (перепишем строку с оплатой, чтобы сохранить контейнер)
-
-    # Чтобы не усложнять, заменим select_folder_and_fill на версию, которая сохраняет контейнер оплаты
-    # Ниже приведена уже обновлённая версия select_folder_and_fill, которую мы вставим вместо предыдущей.
-    # Скопируем её заново с сохранением payment_container.
-    # (Для краткости я приведу новый select_folder_and_fill полностью)
-
-    # ================== ЗАМЕНА select_folder_and_fill ==================
-    def select_folder_and_fill(e):
-        global running_tests
-        root = Tk()
-        root.withdraw()
-        root.attributes('-topmost', True)
-        folder = filedialog.askdirectory()
-        root.destroy()
-        if not folder:
-            return
-
-        files = os.listdir(folder)
-        test_dict = {}
-
-        for fname in files:
-            if not os.path.isfile(os.path.join(folder, fname)):
-                continue
-            if "_Калькуляция_" in fname:
-                typ = "Калькуляция"
-                parts = fname.split("_Калькуляция_", 1)
-            elif "_Расчет_" in fname:
-                typ = "Расчет"
-                parts = fname.split("_Расчет_", 1)
-            else:
-                continue
-
-            test_name = parts[0]
-            comment = parts[1] if len(parts) > 1 else ""
-
-            if test_name not in test_dict:
-                test_dict[test_name] = {}
-            if typ == "Калькуляция":
-                test_dict[test_name]['calc'] = fname
-                test_dict[test_name]['calc_fullpath'] = os.path.join(folder, fname)
-            else:
-                test_dict[test_name]['ras'] = fname
-                test_dict[test_name]['ras_fullpath'] = os.path.join(folder, fname)
-
-        tests_data.clear()
-        table.rows.clear()
-        for i, (test_name, files_data) in enumerate(test_dict.items(), start=1):
-            status_text = make_cell_text("Ожидание", col_widths[2])
-            calc_id_text = make_cell_text("", col_widths[4], center=True)
-            ras_id_text = make_cell_text("", col_widths[6], center=True)
-            payment_text = make_cell_text("", col_widths[7])
+            payment_text = ft.TextField(value="", read_only=True, multiline=False, border="none", text_style=ft.TextStyle(size=12), width=col_widths[7],)
             error_text = ft.TextField(
                 value="",
                 read_only=True,
@@ -458,7 +308,7 @@ def main(page: ft.Page):
                 width=col_widths[7],
                 on_click=None,
                 content=payment_text,
-            )
+)
             # Если есть url, сделаем позже
 
             entry = {
@@ -478,10 +328,11 @@ def main(page: ft.Page):
                 "ras_id_ctrl": ras_id_text,
                 "payment_ctrl": payment_text,
                 "error_ctrl": error_text,
-                "payment_container": payment_container,   # сохраняем контейнер для обновления on_click
+                "payment_container": payment_container,
             }
             tests_data.append(entry)
 
+            # Кнопка "Запросить" с вызовом request_document
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(make_cell_container(ft.Text(str(i)), col_widths[0])),
@@ -517,7 +368,7 @@ def main(page: ft.Page):
                             alignment=ft.alignment.Alignment(0, 0),
                             content=ft.ElevatedButton(
                                 "Запросить",
-                                on_click=lambda e, idx=i-1: print(f"Запрос для строки {idx}"),
+                                on_click=lambda e, idx=i-1: request_document(idx),
                                 width=120,
                                 height=40,
                             ),
@@ -531,11 +382,29 @@ def main(page: ft.Page):
         enable_run_button()
         page.update()
 
+    # Функция обновления текстовых полей (будет вызываться из worker)
+    def update_cells(test):
+        test["status_ctrl"].value = test["status"]
+        if test["status"] in ("Готов", "Согласован"):
+            test["status_ctrl"].color = ft.Colors.GREEN
+        elif test["status"] == "Ошибка":
+            test["status_ctrl"].color = ft.Colors.RED
+        else:
+            test["status_ctrl"].color = None
+
+        test["calc_id_ctrl"].value = test["calc_id"]
+        test["ras_id_ctrl"].value = test["ras_id"]
+        test["payment_ctrl"].value = test["payment_url"]
+        # Обновляем контейнер оплаты для открытия ссылки
+        if "payment_container" in test and test["payment_url"]:
+            test["payment_container"].on_click = lambda e, url=test["payment_url"]: webbrowser.open(url) if url else None
+        else:
+            if "payment_container" in test:
+                test["payment_container"].on_click = None
+        test["error_ctrl"].value = test["error_text"]
+
     # ──────────────────────────────────────────────
     # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ
-    # ──────────────────────────────────────────────
-    # ──────────────────────────────────────────────
-    # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ (с page.run_thread)
     # ──────────────────────────────────────────────
     def run_all_tests(e):
         global running_tests
@@ -649,7 +518,7 @@ def main(page: ft.Page):
                     page.update()
                     continue
 
-                # ── Новый этап: проверка статуса калькуляции с повторами ──
+                # ── Проверка статуса калькуляции с повторами ──
                 test["status"] = "Проверка статуса"
                 update_cells(test)
                 page.update()
@@ -669,10 +538,8 @@ def main(page: ft.Page):
                                 calc_status_ok = True
                                 break
                             else:
-                                # result == false
                                 msg = calc_status.get("data", "")
                                 if isinstance(msg, str) and "Расчет не окончен (A)" in msg:
-                                    # промежуточный статус, ждем и повторяем
                                     if calc_attempt < max_retries:
                                         time.sleep(retry_delay)
                                         continue
@@ -680,7 +547,6 @@ def main(page: ft.Page):
                                         calc_final_error = f"Исчерпаны попытки: {msg}"
                                         break
                                 else:
-                                    # другая ошибка – сразу финал
                                     if isinstance(msg, str):
                                         calc_final_error = msg
                                     elif isinstance(msg, (dict, list)):
@@ -689,7 +555,6 @@ def main(page: ft.Page):
                                         calc_final_error = str(msg) if msg else "Неизвестная ошибка статуса"
                                     break
                         else:
-                            # HTTP ошибка – можно повторить
                             if calc_attempt < max_retries:
                                 time.sleep(retry_delay)
                                 continue
@@ -710,7 +575,7 @@ def main(page: ft.Page):
                     update_cells(test)
                     page.update()
                     continue
-                # иначе успех – продолжаем к этапу 2 (создание договора)
+
                 # ── Этап 2: Создание договора ──
                 test["status"] = "Создание договора"
                 update_cells(test)
@@ -792,11 +657,11 @@ def main(page: ft.Page):
                 update_cells(test)
                 page.update()
 
-            # ── Этап 3: Опрос статуса договора для строк с policyId ──
+            # ── Этап 3: Опрос статуса договора ──
             while True:
                 any_pending = False
                 for test in tests_data:
-                    if test["ras_id"] and test["status"] not in ("Ошибка", "Готов"):
+                    if test["ras_id"] and test["status"] not in ("Ошибка", "Готов", "Согласован"):
                         any_pending = True
                         endpoint_template = method_endpoint_fields["Получение статуса договора"].value.strip()
                         path = endpoint_template.replace("{policyId}", test["ras_id"])
@@ -808,7 +673,11 @@ def main(page: ft.Page):
                                 data = resp.json()
                                 result = data.get("result")
                                 if result == True:
-                                    test["status"] = "Готов"
+                                    status_data = data.get("data", {})
+                                    if isinstance(status_data, dict) and status_data.get("Status") == "ok":
+                                        test["status"] = "Согласован"
+                                    else:
+                                        test["status"] = "Готов"
                                 elif result == False:
                                     msg = data.get("message", "")
                                     if "Ожидание проверки в РСА" in msg:
@@ -816,8 +685,6 @@ def main(page: ft.Page):
                                     else:
                                         test["status"] = "Ошибка"
                                         test["error_text"] = msg
-                                # иначе промежуточный статус
-                            # игнорируем ошибки сети – повторим позже
                         except Exception:
                             pass
 
@@ -827,6 +694,28 @@ def main(page: ft.Page):
                 if not any_pending:
                     break
 
+            # ── Этап 4: Запрос ссылки на оплату для строк со статусом "Согласован" ──
+            endpoint_template_payment = method_endpoint_fields["Ссылка на форму оплаты"].value.strip()
+            for test in tests_data:
+                if test["status"] == "Согласован" and test["ras_id"]:
+                    path = endpoint_template_payment.replace("{policyId}", test["ras_id"])
+                    payment_url = f"{base_url}/{path.lstrip('/')}?key={key_value}"
+                    try:
+                        resp = requests.get(payment_url, timeout=request_timeout)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            url_value = data.get("data", {}).get("url", "")
+                            if url_value:
+                                test["payment_url"] = url_value
+                            else:
+                                test["payment_url"] = "Ссылка не получена"
+                        else:
+                            test["payment_url"] = f"Ошибка HTTP {resp.status_code}"
+                    except Exception as ex:
+                        test["payment_url"] = f"Ошибка: {str(ex)}"
+                    update_cells(test)
+                    page.update()
+
                 time.sleep(poll_interval)
 
             run_all_tests_btn.disabled = False
@@ -834,8 +723,91 @@ def main(page: ft.Page):
             running_tests = False
             page.update()
 
-        # Запускаем worker через page.run_thread
         page.run_thread(worker)
+
+    # ──────────────────────────────────────────────
+    # Функции для PDF
+    # ──────────────────────────────────────────────
+    def fetch_and_save_pdf(url, prefix, policy_id):
+        try:
+            timeout = float(timeout_field.value) if timeout_field.value else 30.0
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code != 200:
+                print(f"Ошибка запроса PDF: {resp.status_code}")
+                return
+            data = resp.json()
+            b64 = data.get("return") or data.get("data", {}).get("return")
+            if not b64 and isinstance(data.get("data"), str):
+                b64 = data["data"]
+            if not b64:
+                print("Не удалось найти base64 строку в ответе")
+                return
+            pdf_bytes = base64.b64decode(b64)
+            root = Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf")],
+                initialfile=f"{prefix}_{policy_id}.pdf"
+            )
+            root.destroy()
+            if file_path:
+                with open(file_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                print(f"Файл сохранён: {file_path}")
+        except Exception as ex:
+            print(f"Ошибка при получении/сохранении PDF: {ex}")
+
+    def show_pdf_choice_dialog(index):
+        def on_sample(e):
+            page.dialog = None
+            page.update()
+            request_document(index, force_type='sample')
+        def on_policy(e):
+            page.dialog = None
+            page.update()
+            request_document(index, force_type='policy')
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Выберите тип документа"),
+            actions=[
+                ft.ElevatedButton("Образец", on_click=on_sample),
+                ft.ElevatedButton("Полис", on_click=on_policy),
+            ],
+        )
+        page.dialog = dialog
+        page.update()
+
+    def request_document(index, force_type=None):
+        if index < 0 or index >= len(tests_data):
+            return
+        test = tests_data[index]
+        policy_id = test.get("ras_id", "")
+        if not policy_id:
+            return
+        key_value = api_key_value.value
+        status = test["status"]
+
+        if force_type is None:
+            if status == "Согласован":
+                force_type = 'sample'
+            elif status == "Готов":
+                show_pdf_choice_dialog(index)
+                return
+            else:
+                return
+
+        if force_type == 'sample':
+            endpoint_template = method_endpoint_fields["Получение ПДФ образца"].value.strip()
+        else:
+            endpoint_template = method_endpoint_fields["Получение ПДФ документа"].value.strip()
+
+        path = endpoint_template.replace("{policyId}", policy_id)
+        base = base_url_field.value.strip().rstrip("/")
+        url = f"{base}/{path.lstrip('/')}?key={key_value}"
+        prefix = "образец" if force_type == 'sample' else "полис"
+        fetch_and_save_pdf(url, prefix, policy_id)
 
     # Кнопки действий
     run_all_tests_btn = ft.ElevatedButton(
@@ -877,13 +849,13 @@ def main(page: ft.Page):
     # ──────────────────────────────────────────────
     default_endpoints = {
         "Создание заявки на расчёт": "/calculate/",
-        "Получение статуса калькуляции": "/calculate/{id}/", 
+        "Получение статуса калькуляции": "/calculate/{id}/",
         "Создание договора": "/create/",
         "Получение статуса договора": "/policy/{policyId}/status/",
-        "Ссылка на форму оплаты": "/payment_link/",
-        "Получение ПДФ образца": "/pdf_sample/",
+        "Ссылка на форму оплаты": "/policy/{policyId}/acquiring/renins/",
+        "Получение ПДФ образца": "/policy/{policyId}/pdfSample/",
         "Перевод в действующие": "/activate/",
-        "Получение ПДФ документа": "/pdf_document/",
+        "Получение ПДФ документа": "/policy/{policyId}/pdf/",
     }
 
     method_endpoint_fields = {}
@@ -897,26 +869,19 @@ def main(page: ft.Page):
     # Поля для повторов
     retry_count_field = ft.TextField(label="Количество попыток", value="5", width=200)
     retry_delay_field = ft.TextField(label="Пауза между попытками (сек)", value="3", width=200)
-
-    # Добавляем их в тот же список settings_rows
-    # Тайм-аут для запросов
     timeout_field = ft.TextField(label="Тайм-аут запроса (сек)", value="30", width=200)
-    
-    # Интервал опроса статуса
     status_poll_interval_field = ft.TextField(label="Интервал опроса статуса (сек)", value="10", width=200)
 
     settings_rows.append(ft.Divider())
     settings_rows.append(ft.Text("Параметры повторов", weight=ft.FontWeight.BOLD))
     settings_rows.append(ft.Row([retry_count_field, retry_delay_field]))
     settings_rows.append(ft.Row([status_poll_interval_field]))
-    settings_rows.append(ft.Row([timeout_field])) 
+    settings_rows.append(ft.Row([timeout_field]))
 
-    # Теперь финальное присваивание – всё попадёт на экран
     settings_container.controls = [
         ft.Text("Настройки эндпоинтов", weight=ft.FontWeight.BOLD, size=16),
         ft.Text("Укажите относительные пути (или полные URL) для каждого запроса."),
     ] + settings_rows
-
 
     # ──────────────────────────────────────────────
     # Начальное состояние
