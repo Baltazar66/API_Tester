@@ -54,9 +54,9 @@ def main(page: ft.Page):
     # ──────────────────────────────────────────────
     # Кнопки переключения режимов
     # ──────────────────────────────────────────────
-    manual_btn = ft.ElevatedButton("Ручной запрос", on_click=lambda e: switch_mode(0))
-    auto_btn = ft.ElevatedButton("Автотесты", on_click=lambda e: switch_mode(1))
-    settings_btn = ft.ElevatedButton("Настройки", on_click=lambda e: switch_mode(2))
+    manual_btn = ft.Button("Ручной запрос", on_click=lambda e: switch_mode(0))
+    auto_btn = ft.Button("Автотесты", on_click=lambda e: switch_mode(1))
+    settings_btn = ft.Button("Настройки", on_click=lambda e: switch_mode(2))
 
     def switch_mode(index):
         manual_container.visible = (index == 0)
@@ -169,24 +169,50 @@ def main(page: ft.Page):
         ft.Divider(),
         ft.Text("Данные запроса", weight=ft.FontWeight.BOLD),
         ft.Row([
-            ft.ElevatedButton("Выбрать файл с данными", on_click=pick_file_dialog),
+            ft.Button("Выбрать файл с данными", on_click=pick_file_dialog),
             selected_file_label,
         ]),
         ft.Divider(),
         ft.Text("Авторизация (API Key в Query)", weight=ft.FontWeight.BOLD),
         ft.Row([api_key_name, api_key_value]),
         ft.Divider(),
-        ft.ElevatedButton("Отправить запрос", on_click=send_request),
+        ft.Button("Отправить запрос", on_click=send_request),
         response_area,
     ]
 
     # ──────────────────────────────────────────────
-    # АВТОТЕСТЫ (надёжное обновление через контент ячеек)
+    # АВТОТЕСТЫ (единая реализация)
     # ──────────────────────────────────────────────
     tests_data = []
 
-    # Ширины колонок
-    col_widths = [30, 130, 90, 150, 110, 150, 110, 250, 280, 130]
+    # Ширины колонок (увеличена ширина "Текущий статус" до 120)
+    col_widths = [30, 130, 120, 150, 110, 150, 110, 250, 280, 130]
+
+    selected_document_index = -1
+
+    # Панель выбора типа документа (образец / полис)
+    def on_sample_click(e):
+        nonlocal selected_document_index
+        if selected_document_index >= 0:
+            request_document(selected_document_index, 'sample')
+        pdf_choice_panel.visible = False
+        page.update()
+
+    def on_policy_click(e):
+        nonlocal selected_document_index
+        if selected_document_index >= 0:
+            request_document(selected_document_index, 'policy')
+        pdf_choice_panel.visible = False
+        page.update()
+
+    pdf_choice_panel = ft.Row(
+        [
+            ft.Text("Выберите тип документа: "),
+            ft.Button("Образец", on_click=on_sample_click),
+            ft.Button("Полис", on_click=on_policy_click),
+        ],
+        visible=False,
+    )
 
     def open_file_local(filepath):
         """Открыть файл локально (версия внутри main)"""
@@ -224,9 +250,7 @@ def main(page: ft.Page):
         column_spacing=0,
     )
 
-    # Вспомогательные функции создания неизменяемых частей ячеек
     def make_cell_text(text, width, center=False):
-        """Возвращает ft.Text для использования внутри ячейки"""
         return ft.Text(
             text,
             overflow=ft.TextOverflow.ELLIPSIS,
@@ -235,7 +259,6 @@ def main(page: ft.Page):
         )
 
     def make_cell_container(content, width, tooltip_text=None, center=False):
-        """Возвращает ft.Container с заданным содержимым"""
         tooltip = ft.Tooltip(message=tooltip_text, bgcolor="#757575") if tooltip_text else None
         return ft.Container(
             width=width,
@@ -244,11 +267,12 @@ def main(page: ft.Page):
             content=content,
         )
 
-    # Ячейки, которые будут обновляться: статус, calc_id, ras_id, payment_url, error_text
-    # Создаются один раз и сохраняются в tests_data
-
+    # Единая функция заполнения таблицы (версия с сохранением контролов)
     def select_folder_and_fill(e):
         global running_tests
+        nonlocal selected_document_index
+        selected_document_index = -1
+        pdf_choice_panel.visible = False
         root = Tk()
         root.withdraw()
         root.attributes('-topmost', True)
@@ -287,11 +311,25 @@ def main(page: ft.Page):
         tests_data.clear()
         table.rows.clear()
         for i, (test_name, files_data) in enumerate(test_dict.items(), start=1):
-            # Объекты, которые будем обновлять
-            status_text = make_cell_text("Ожидание", col_widths[2])
+            # Многострочный статус
+            status_text = ft.Text(
+                "Ожидание",
+                no_wrap=False,
+                overflow=ft.TextOverflow.VISIBLE,
+                width=col_widths[2],
+                max_lines=3,
+                text_align=ft.TextAlign.CENTER,
+            )
             calc_id_text = make_cell_text("", col_widths[4], center=True)
             ras_id_text = make_cell_text("", col_widths[6], center=True)
-            payment_text = ft.TextField(value="", read_only=True, multiline=False, border="none", text_style=ft.TextStyle(size=12), width=col_widths[7],)
+            payment_text = ft.TextField(
+                value="",
+                read_only=True,
+                multiline=False,
+                border="none",
+                text_style=ft.TextStyle(size=12),
+                width=col_widths[7],
+            )
             error_text = ft.TextField(
                 value="",
                 read_only=True,
@@ -308,8 +346,7 @@ def main(page: ft.Page):
                 width=col_widths[7],
                 on_click=None,
                 content=payment_text,
-)
-            # Если есть url, сделаем позже
+            )
 
             entry = {
                 "num": i,
@@ -332,12 +369,12 @@ def main(page: ft.Page):
             }
             tests_data.append(entry)
 
-            # Кнопка "Запросить" с вызовом request_document
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(make_cell_container(ft.Text(str(i)), col_widths[0])),
                     ft.DataCell(make_cell_container(ft.Text(test_name), col_widths[1])),
-                    ft.DataCell(make_cell_container(status_text, col_widths[2])),
+                    # Статус: просто передаём контрол status_text в контейнер
+                    ft.DataCell(ft.Container(width=col_widths[2], content=status_text)),
                     ft.DataCell(
                         ft.Container(
                             width=col_widths[3],
@@ -366,9 +403,9 @@ def main(page: ft.Page):
                         ft.Container(
                             width=col_widths[9],
                             alignment=ft.alignment.Alignment(0, 0),
-                            content=ft.ElevatedButton(
+                            content=ft.Button(
                                 "Запросить",
-                                on_click=lambda e, idx=i-1: request_document(idx),
+                                on_click=lambda e, idx=i-1: on_request_button_click(idx),
                                 width=120,
                                 height=40,
                             ),
@@ -380,13 +417,17 @@ def main(page: ft.Page):
 
         running_tests = False
         enable_run_button()
+        update_activate_button_state()
         page.update()
 
-    # Функция обновления текстовых полей (будет вызываться из worker)
+    # Функция обновления текстовых полей
     def update_cells(test):
         test["status_ctrl"].value = test["status"]
-        if test["status"] in ("Готов", "Согласован"):
+        # Цвета статусов
+        if test["status"] in ("Готов", "Согласован", "Оформлен"):
             test["status_ctrl"].color = ft.Colors.GREEN
+        elif test["status"] in ("Ошибка калькуляции", "Ошибка расчета"):
+            test["status_ctrl"].color = ft.Colors.YELLOW
         elif test["status"] == "Ошибка":
             test["status_ctrl"].color = ft.Colors.RED
         else:
@@ -395,7 +436,6 @@ def main(page: ft.Page):
         test["calc_id_ctrl"].value = test["calc_id"]
         test["ras_id_ctrl"].value = test["ras_id"]
         test["payment_ctrl"].value = test["payment_url"]
-        # Обновляем контейнер оплаты для открытия ссылки
         if "payment_container" in test and test["payment_url"]:
             test["payment_container"].on_click = lambda e, url=test["payment_url"]: webbrowser.open(url) if url else None
         else:
@@ -403,9 +443,82 @@ def main(page: ft.Page):
                 test["payment_container"].on_click = None
         test["error_ctrl"].value = test["error_text"]
 
-    # ──────────────────────────────────────────────
-    # ФУНКЦИЯ ЗАПУСКА ВСЕХ ТЕСТОВ
-    # ──────────────────────────────────────────────
+        update_activate_button_state()
+
+    # ----- Логика PDF -----
+    def fetch_and_save_pdf(url, prefix, policy_id):
+        try:
+            timeout = float(timeout_field.value) if timeout_field.value else 30.0
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code != 200:
+                print(f"Ошибка запроса PDF: {resp.status_code}")
+                return
+            data = resp.json()
+            b64 = data.get("return") or data.get("data", {}).get("return")
+            if not b64:
+                if isinstance(data.get("data"), str):
+                    b64 = data["data"]
+            if not b64:
+                print("Не удалось найти base64 строку в ответе")
+                return
+            pdf_bytes = base64.b64decode(b64)
+            root = Tk()
+            root.withdraw()
+            root.attributes('-topmost', True)
+            file_path = filedialog.asksaveasfilename(
+                defaultextension=".pdf",
+                filetypes=[("PDF files", "*.pdf")],
+                initialfile=f"{prefix}_{policy_id}.pdf"
+            )
+            root.destroy()
+            if file_path:
+                with open(file_path, 'wb') as f:
+                    f.write(pdf_bytes)
+                print(f"Файл сохранён: {file_path}")
+        except Exception as ex:
+            print(f"Ошибка при получении/сохранении PDF: {ex}")
+
+    def on_request_button_click(index):
+        if index < 0 or index >= len(tests_data):
+            return
+        test = tests_data[index]
+        policy_id = test.get("ras_id", "")
+        if not policy_id:
+            return
+        status = test["status"]
+
+        if status == "Согласован":
+            # Сразу запросить образец
+            request_document(index, 'sample')
+        elif status in ("Готов", "Оформлен"):
+            # Показать панель выбора
+            nonlocal selected_document_index
+            selected_document_index = index
+            pdf_choice_panel.visible = True
+            page.update()
+        # остальные статусы игнорируются
+
+    def request_document(index, doc_type):
+        # doc_type: 'sample' или 'policy'
+        test = tests_data[index]
+        policy_id = test.get("ras_id", "")
+        if not policy_id:
+            return
+        key_value = api_key_value.value
+        base_url = base_url_field.value.strip().rstrip("/")
+
+        if doc_type == 'sample':
+            endpoint_template = method_endpoint_fields["Получение ПДФ образца"].value.strip()
+            prefix = "образец"
+        else:
+            endpoint_template = method_endpoint_fields["Получение ПДФ документа"].value.strip()
+            prefix = "полис"
+
+        path = endpoint_template.replace("{policyId}", policy_id)
+        url = f"{base_url}/{path.lstrip('/')}?key={key_value}"
+        fetch_and_save_pdf(url, prefix, policy_id)
+
+    # ----- Запуск всех тестов -----
     def run_all_tests(e):
         global running_tests
         if running_tests:
@@ -518,7 +631,7 @@ def main(page: ft.Page):
                     page.update()
                     continue
 
-                # ── Проверка статуса калькуляции с повторами ──
+                # ── Проверка статуса калькуляции ──
                 test["status"] = "Проверка статуса"
                 update_cells(test)
                 page.update()
@@ -570,7 +683,7 @@ def main(page: ft.Page):
                             break
 
                 if not calc_status_ok:
-                    test["status"] = "Ошибка"
+                    test["status"] = "Ошибка калькуляции"
                     test["error_text"] = calc_final_error if calc_final_error else "Не удалось проверить статус калькуляции"
                     update_cells(test)
                     page.update()
@@ -661,7 +774,7 @@ def main(page: ft.Page):
             while True:
                 any_pending = False
                 for test in tests_data:
-                    if test["ras_id"] and test["status"] not in ("Ошибка", "Готов", "Согласован"):
+                    if test["ras_id"] and test["status"] not in ("Ошибка", "Готов", "Согласован", "Ошибка расчета", "Ошибка калькуляции"):
                         any_pending = True
                         endpoint_template = method_endpoint_fields["Получение статуса договора"].value.strip()
                         path = endpoint_template.replace("{policyId}", test["ras_id"])
@@ -673,8 +786,18 @@ def main(page: ft.Page):
                                 data = resp.json()
                                 result = data.get("result")
                                 if result == True:
-                                    status_data = data.get("data", {})
-                                    if isinstance(status_data, dict) and status_data.get("Status") == "ok":
+                                    status_val = None
+                                    data_content = data.get("data")
+                                    if isinstance(data_content, dict):
+                                        status_val = data_content.get("Status")
+                                    elif isinstance(data_content, list) and len(data_content) > 0:
+                                        first = data_content[0]
+                                        if isinstance(first, dict):
+                                            status_val = first.get("Status")
+                                        elif isinstance(first, str):
+                                            pass
+
+                                    if status_val and str(status_val).strip().lower() == "ok":
                                         test["status"] = "Согласован"
                                     else:
                                         test["status"] = "Готов"
@@ -683,7 +806,7 @@ def main(page: ft.Page):
                                     if "Ожидание проверки в РСА" in msg:
                                         test["status"] = "Проверка РСА"
                                     else:
-                                        test["status"] = "Ошибка"
+                                        test["status"] = "Ошибка расчета"
                                         test["error_text"] = msg
                         except Exception:
                             pass
@@ -694,17 +817,37 @@ def main(page: ft.Page):
                 if not any_pending:
                     break
 
-            # ── Этап 4: Запрос ссылки на оплату для строк со статусом "Согласован" ──
+                time.sleep(poll_interval)
+
+            update_activate_button_state()
+
+            # ── Этап 4: Запрос ссылки на оплату ──
             endpoint_template_payment = method_endpoint_fields["Ссылка на форму оплаты"].value.strip()
             for test in tests_data:
                 if test["status"] == "Согласован" and test["ras_id"]:
                     path = endpoint_template_payment.replace("{policyId}", test["ras_id"])
-                    payment_url = f"{base_url}/{path.lstrip('/')}?key={key_value}"
+                    payment_url = f"{base_url}/{path.lstrip('/')}"
+                    post_data = {
+                        "key": key_value,
+                        "fail_url": fail_url_field.value,
+                        "success_url": success_url_field.value,
+                    }
                     try:
-                        resp = requests.get(payment_url, timeout=request_timeout)
+                        resp = requests.post(payment_url, data=post_data, timeout=request_timeout)
                         if resp.status_code == 200:
                             data = resp.json()
-                            url_value = data.get("data", {}).get("url", "")
+                            url_value = ""
+                            data_obj = data.get("data")
+                            if isinstance(data_obj, dict):
+                                url_value = data_obj.get("url", "")
+                            elif isinstance(data_obj, list) and len(data_obj) > 0:
+                                first = data_obj[0]
+                                if isinstance(first, dict):
+                                    url_value = first.get("url", "")
+                                elif isinstance(first, str):
+                                    url_value = first
+                            elif isinstance(data_obj, str):
+                                url_value = data_obj
                             if url_value:
                                 test["payment_url"] = url_value
                             else:
@@ -716,7 +859,7 @@ def main(page: ft.Page):
                     update_cells(test)
                     page.update()
 
-                time.sleep(poll_interval)
+            update_activate_button_state()
 
             run_all_tests_btn.disabled = False
             activate_all_btn.disabled = False
@@ -725,107 +868,67 @@ def main(page: ft.Page):
 
         page.run_thread(worker)
 
-    # ──────────────────────────────────────────────
-    # Функции для PDF
-    # ──────────────────────────────────────────────
-    def fetch_and_save_pdf(url, prefix, policy_id):
-        try:
-            timeout = float(timeout_field.value) if timeout_field.value else 30.0
-            resp = requests.get(url, timeout=timeout)
-            if resp.status_code != 200:
-                print(f"Ошибка запроса PDF: {resp.status_code}")
-                return
-            data = resp.json()
-            b64 = data.get("return") or data.get("data", {}).get("return")
-            if not b64 and isinstance(data.get("data"), str):
-                b64 = data["data"]
-            if not b64:
-                print("Не удалось найти base64 строку в ответе")
-                return
-            pdf_bytes = base64.b64decode(b64)
-            root = Tk()
-            root.withdraw()
-            root.attributes('-topmost', True)
-            file_path = filedialog.asksaveasfilename(
-                defaultextension=".pdf",
-                filetypes=[("PDF files", "*.pdf")],
-                initialfile=f"{prefix}_{policy_id}.pdf"
-            )
-            root.destroy()
-            if file_path:
-                with open(file_path, 'wb') as f:
-                    f.write(pdf_bytes)
-                print(f"Файл сохранён: {file_path}")
-        except Exception as ex:
-            print(f"Ошибка при получении/сохранении PDF: {ex}")
-
-    def show_pdf_choice_dialog(index):
-        def on_sample(e):
-            page.dialog = None
-            page.update()
-            request_document(index, force_type='sample')
-        def on_policy(e):
-            page.dialog = None
-            page.update()
-            request_document(index, force_type='policy')
-
-        dialog = ft.AlertDialog(
-            title=ft.Text("Выберите тип документа"),
-            actions=[
-                ft.ElevatedButton("Образец", on_click=on_sample),
-                ft.ElevatedButton("Полис", on_click=on_policy),
-            ],
-        )
-        page.dialog = dialog
-        page.update()
-
-    def request_document(index, force_type=None):
-        if index < 0 or index >= len(tests_data):
-            return
-        test = tests_data[index]
-        policy_id = test.get("ras_id", "")
-        if not policy_id:
-            return
-        key_value = api_key_value.value
-        status = test["status"]
-
-        if force_type is None:
-            if status == "Согласован":
-                force_type = 'sample'
-            elif status == "Готов":
-                show_pdf_choice_dialog(index)
-                return
-            else:
-                return
-
-        if force_type == 'sample':
-            endpoint_template = method_endpoint_fields["Получение ПДФ образца"].value.strip()
-        else:
-            endpoint_template = method_endpoint_fields["Получение ПДФ документа"].value.strip()
-
-        path = endpoint_template.replace("{policyId}", policy_id)
-        base = base_url_field.value.strip().rstrip("/")
-        url = f"{base}/{path.lstrip('/')}?key={key_value}"
-        prefix = "образец" if force_type == 'sample' else "полис"
-        fetch_and_save_pdf(url, prefix, policy_id)
-
-    # Кнопки действий
-    run_all_tests_btn = ft.ElevatedButton(
+    # ----- Кнопки действий -----
+    run_all_tests_btn = ft.Button(
         "Запустить все тесты",
         on_click=run_all_tests,
         disabled=True,
     )
 
-    activate_all_btn = ft.ElevatedButton(
+    # ----- Функция активации (перевод в действующие) -----
+    def activate_all(e):
+        base_url = base_url_field.value.strip().rstrip("/")
+        key_value = api_key_value.value
+        endpoint_template = method_endpoint_fields["Перевод в действующие"].value.strip()
+        timeout = float(timeout_field.value) if timeout_field.value else 30.0
+
+        for test in tests_data:
+            if test["status"] == "Согласован" and test["ras_id"]:
+                path = endpoint_template.replace("{policyId}", test["ras_id"])
+                url = f"{base_url}/{path.lstrip('/')}?key={key_value}"
+                try:
+                    resp = requests.get(url, timeout=timeout)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        # Проверяем структуру успешного ответа
+                        if (data.get("result") == True and 
+                            isinstance(data.get("data"), dict) and
+                            data["data"].get("result") == True and
+                            isinstance(data["data"].get("return"), dict) and
+                            data["data"]["return"].get("Status") == True and
+                            data.get("message") == "ok"):
+                            test["status"] = "Оформлен"
+                        else:
+                            # Извлекаем сообщение об ошибке из возможных мест
+                            error_msg = (data.get("message") or 
+                                         (data.get("data", {}).get("message") if isinstance(data.get("data"), dict) else None) or 
+                                         "Не удалось активировать")
+                            test["status"] = "Ошибка активации"
+                            test["error_text"] = error_msg
+                    else:
+                        test["status"] = "Ошибка активации"
+                        test["error_text"] = f"HTTP {resp.status_code}"
+                except Exception as ex:
+                    test["status"] = "Ошибка активации"
+                    test["error_text"] = str(ex)
+                update_cells(test)
+                page.update()
+        update_activate_button_state()
+
+    activate_all_btn = ft.Button(
         "Перевести в действующие",
-        on_click=lambda e: print("Перевод всех в действующие (заглушка)"),
+        on_click=activate_all,
         disabled=True,
     )
 
     def enable_run_button():
         has_rows = len(tests_data) > 0
         run_all_tests_btn.disabled = not has_rows
-        activate_all_btn.disabled = not has_rows
+        page.update()
+
+    def update_activate_button_state():
+        has_agreed = any(test["status"] == "Согласован" for test in tests_data)
+        activate_all_btn.disabled = not has_agreed
         page.update()
 
     # Обёртка для заполнения папки
@@ -835,17 +938,18 @@ def main(page: ft.Page):
     auto_container.controls = [
         ft.Text("Массовое тестирование", weight=ft.FontWeight.BOLD, size=16),
         ft.Row([
-            ft.ElevatedButton("Заполнить таблицу из папки", on_click=select_folder_and_fill_wrapper),
+            ft.Button("Заполнить таблицу из папки", on_click=select_folder_and_fill_wrapper),
             run_all_tests_btn,
             activate_all_btn,
         ]),
         ft.Divider(),
         ft.Text("Результаты тестов:", weight=ft.FontWeight.BOLD),
         ft.Row([table], scroll=ft.ScrollMode.AUTO),
+        pdf_choice_panel, 
     ]
 
     # ──────────────────────────────────────────────
-    # НАСТРОЙКИ (эндпоинты для семи методов)
+    # НАСТРОЙКИ
     # ──────────────────────────────────────────────
     default_endpoints = {
         "Создание заявки на расчёт": "/calculate/",
@@ -854,8 +958,8 @@ def main(page: ft.Page):
         "Получение статуса договора": "/policy/{policyId}/status/",
         "Ссылка на форму оплаты": "/policy/{policyId}/acquiring/renins/",
         "Получение ПДФ образца": "/policy/{policyId}/pdfSample/",
-        "Перевод в действующие": "/activate/",
         "Получение ПДФ документа": "/policy/{policyId}/pdf/",
+        "Перевод в действующие": "/policy/{policyId}/register/",
     }
 
     method_endpoint_fields = {}
@@ -866,17 +970,21 @@ def main(page: ft.Page):
         method_endpoint_fields[method_name] = field
         settings_rows.append(ft.Row([label, field]))
 
-    # Поля для повторов
     retry_count_field = ft.TextField(label="Количество попыток", value="5", width=200)
     retry_delay_field = ft.TextField(label="Пауза между попытками (сек)", value="3", width=200)
     timeout_field = ft.TextField(label="Тайм-аут запроса (сек)", value="30", width=200)
     status_poll_interval_field = ft.TextField(label="Интервал опроса статуса (сек)", value="10", width=200)
+    fail_url_field = ft.TextField(label="fail_url", value="http://yandex.ru/fail_page/", width=400)
+    success_url_field = ft.TextField(label="success_url", value="http://yandex.ru/success/", width=400)
 
     settings_rows.append(ft.Divider())
     settings_rows.append(ft.Text("Параметры повторов", weight=ft.FontWeight.BOLD))
     settings_rows.append(ft.Row([retry_count_field, retry_delay_field]))
     settings_rows.append(ft.Row([status_poll_interval_field]))
     settings_rows.append(ft.Row([timeout_field]))
+    settings_rows.append(ft.Divider())
+    settings_rows.append(ft.Text("Параметры ссылки на оплату", weight=ft.FontWeight.BOLD))
+    settings_rows.append(ft.Row([fail_url_field, success_url_field]))
 
     settings_container.controls = [
         ft.Text("Настройки эндпоинтов", weight=ft.FontWeight.BOLD, size=16),
@@ -900,4 +1008,4 @@ def main(page: ft.Page):
         settings_container,
     )
 
-ft.app(target=main)
+ft.run(main)
